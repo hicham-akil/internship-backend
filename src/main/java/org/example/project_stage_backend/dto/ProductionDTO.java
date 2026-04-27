@@ -1,4 +1,4 @@
-package com.ocp.jfc1.dto;
+package org.example.project_stage_backend.dto;
 
 import lombok.Data;
 import java.time.LocalDateTime;
