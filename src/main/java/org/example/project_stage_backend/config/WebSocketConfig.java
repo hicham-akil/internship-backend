@@ -16,7 +16,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/ws-jfc1")             // URL de connexion desktop
-                .setAllowedOriginPatterns("*");       // restreindre en prod
+        registry.addEndpoint("/ws-jfc1")
+                .setAllowedOriginPatterns("*")
+                .withSockJS();  // ← AJOUTER
     }
 }

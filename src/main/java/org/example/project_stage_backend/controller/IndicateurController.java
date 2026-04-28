@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/indicateurs")
+@RequestMapping("/indicateurs")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class IndicateurController {
