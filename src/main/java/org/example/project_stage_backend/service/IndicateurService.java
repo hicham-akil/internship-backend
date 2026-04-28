@@ -43,7 +43,10 @@ public class IndicateurService {
         log.info("Indicateurs calculés et sauvegardés pour date={}", dateRef);
 
         IndicateursDTO result = toDTO(saved);
-        messagingTemplate.convertAndSend("/topic/indicateurs", result); // ← AJOUT 3
+        messagingTemplate.convertAndSend("/topic/indicateurs", result);
+        log.info("PRODUCTION DTO = {}", dto.getProduction());
+        log.info("Q29 = {}", dto.getProduction().getQP2o529());
+        log.info("Q54 = {}", dto.getProduction().getQP2o554());
         return result;
     }
 
@@ -89,6 +92,13 @@ public class IndicateurService {
         return indicateursRepo.findTop100ByOrderByDateDesc()
                 .stream().map(this::toDTO).collect(Collectors.toList());
     }
+    private Double safe(Double v, String field) {
+        if (v == null) {
+            log.warn("⚠ NULL VALUE DETECTED → {}", field);
+            return 0.0;
+        }
+        return v;
+    }
 
     // ── MOTEUR DE CALCUL ──────────────────────────────────────────
 
@@ -115,35 +125,108 @@ public class IndicateurService {
     }
 
     private IndicateursCalcules calculer(
-            LocalDateTime dateRef, AnalyseGypse gypse,
-            AnalysePhosphate phosphate, Production production, Consommation conso) {
+            LocalDateTime dateRef,
+            AnalyseGypse gypse,
+            AnalysePhosphate phosphate,
+            Production production,
+            Consommation conso) {
 
-        Double se    = moyenne(gypse.getSeA(),  gypse.getSeB());
-        Double syn   = moyenne(gypse.getSynA(), gypse.getSynB());
+        log.info("⚙ CALCULATION START for {}", dateRef);
+
+        // =========================
+        // 1. AVERAGES (OK)
+        // =========================
+        Double se     = moyenne(gypse.getSeA(), gypse.getSeB());
+        Double syn    = moyenne(gypse.getSynA(), gypse.getSynB());
         Double intVal = moyenne(gypse.getIntA(), gypse.getIntB());
-        Double cap   = somme(production.getQP2o529(), production.getQP2o554());
 
-        Double p2o5GypseOym = moyenne(gypse.getP2o5GypseA(), gypse.getP2o5GypseB());
-        Double rc = diviserPourcentage(p2o5GypseOym, phosphate.getP2o5Phosphate());
+        Double p2o5Gypse = moyenne(gypse.getP2o5GypseA(), gypse.getP2o5GypseB());
+        Double caOGypse  = moyenne(gypse.getCaOGypseA(), gypse.getCaOGypseB());
 
-        Double p2o5IntrantTotal = (phosphate.getQPhosphate() != null && phosphate.getP2o5Phosphate() != null)
-                ? phosphate.getQPhosphate() * phosphate.getP2o5Phosphate() / 100.0 : null;
-        Double ri = diviserPourcentage(cap, p2o5IntrantTotal);
+        Double p2o5Phosphate = phosphate.getP2o5Phosphate();
+        Double caOPhosphate  = phosphate.getCaOPhosphate();
+        Double qPhosphate    = phosphate.getQPhosphate();
 
-        Double consoH2so4      = diviser(conso.getQteH2so4(),      cap);
-        Double consoEauBrute   = diviser(conso.getQteEauBrute(),   cap);
-        Double consoPhosphates = diviser(conso.getQtePhosphates(), cap);
-        Double consoVapeur     = diviser(conso.getQteVapeur(),     cap);
+        Double q29 = production.getQP2o529();
+        Double q54 = production.getQP2o554();
 
+        Double h2so4   = conso.getQteH2so4();
+        Double eau     = conso.getQteEauBrute();
+        Double phosph  = conso.getQtePhosphates();
+        Double vapeur  = conso.getQteVapeur();
+
+        // =========================
+        // 2. RC (CORRECTED FORMULA)
+        // RC = 1 - (p2o5_gypse * CaO_phosphate) / (p2o5_phosphate * CaO_gypse)
+        // =========================
+        Double rc = null;
+        if (p2o5Gypse != null && caOPhosphate != null &&
+                p2o5Phosphate != null && caOGypse != null &&
+                p2o5Phosphate != 0 && caOGypse != 0) {
+
+            rc = 1.0 - (
+                    (p2o5Gypse * caOPhosphate) /
+                            (p2o5Phosphate * caOGypse)
+            );
+        }
+
+        // =========================
+        // 3. RI (FIXED)
+        // RI = q29 / ((p2o5_phosphate * Q_phosphate) / 100)
+        // =========================
+        Double ri = null;
+        if (q29 != null && p2o5Phosphate != null && qPhosphate != null) {
+
+            Double denominator = (p2o5Phosphate * qPhosphate) / 100.0;
+
+            if (denominator != 0) {
+                ri = q29 / denominator;
+            }
+        }
+
+        // =========================
+        // 4. CAP (FIXED)
+        // CAP = q54 / q29
+        // =========================
+        Double cap = null;
+        if (q29 != null && q54 != null && q29 != 0) {
+            cap = q54 / q29;
+        }
+
+        // =========================
+        // 5. CONSUMPTIONS (FIXED)
+        // =========================
+        Double consoH2so4    = (h2so4 != null && q29 != null && q29 != 0) ? h2so4 / q29 : null;
+        Double consoEauBrute = (eau != null && q29 != null && q29 != 0) ? eau / q29 : null;
+        Double consoPhos     = (phosph != null && q29 != null && q29 != 0) ? phosph / q29 : null;
+        Double consoVapeur   = (vapeur != null && q54 != null && q54 != 0) ? vapeur / q54 : null;
+
+        // =========================
+        // LOG OUTPUT (DEBUG)
+        // =========================
+        log.info("📊 RESULTS:");
+        log.info("RC={}", rc);
+        log.info("RI={}", ri);
+        log.info("CAP={}", cap);
+        log.info("CONSO H2SO4={}", consoH2so4);
+
+        // =========================
+        // RETURN
+        // =========================
         return IndicateursCalcules.builder()
                 .date(dateRef)
-                .se(arrondir(se)).syn(arrondir(syn)).intVal(arrondir(intVal))
-                .rc(arrondir(rc)).ri(arrondir(ri)).cap(arrondir(cap))
-                .consoH2so4(arrondir(consoH2so4)).consoEauBrute(arrondir(consoEauBrute))
-                .consoPhosphates(arrondir(consoPhosphates)).consoVapeur(arrondir(consoVapeur))
+                .se(arrondir(se))
+                .syn(arrondir(syn))
+                .intVal(arrondir(intVal))
+                .rc(arrondir(rc))
+                .ri(arrondir(ri))
+                .cap(arrondir(cap))
+                .consoH2so4(arrondir(consoH2so4))
+                .consoEauBrute(arrondir(consoEauBrute))
+                .consoPhosphates(arrondir(consoPhos))
+                .consoVapeur(arrondir(consoVapeur))
                 .build();
     }
-
     // ── MAPPERS ───────────────────────────────────────────────────
 
     private AnalyseGypse sauvegarderGypse(AnalyseGypseDTO dto) {
