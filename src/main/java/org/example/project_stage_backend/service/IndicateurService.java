@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 public class IndicateurService {
 
     private static final long TOLERANCE_MINUTES = 1L;
-
+    private final AlerteService alerteService;
     private final AnalyseGypseRepository        gypseRepo;
     private final AnalysePhosphateRepository    phosphateRepo;
     private final ProductionRepository          productionRepo;
@@ -44,6 +44,7 @@ public class IndicateurService {
 
         IndicateursDTO result = toDTO(saved);
         messagingTemplate.convertAndSend("/topic/indicateurs", result);
+        alerteService.verifierEtCreerAlertes(saved);
         log.info("PRODUCTION DTO = {}", dto.getProduction());
         log.info("Q29 = {}", dto.getProduction().getQP2o529());
         log.info("Q54 = {}", dto.getProduction().getQP2o554());
@@ -120,7 +121,8 @@ public class IndicateurService {
                 dateRef, gypse.get(), phosphate.get(), production.get(), conso.get());
 
         IndicateursDTO result = toDTO(indicateursRepo.save(indicateurs));
-        messagingTemplate.convertAndSend("/topic/indicateurs", result); // ← AJOUT 3 (aussi ici)
+        messagingTemplate.convertAndSend("/topic/indicateurs", result);
+        alerteService.verifierEtCreerAlertes(indicateurs);
         return result;
     }
 
