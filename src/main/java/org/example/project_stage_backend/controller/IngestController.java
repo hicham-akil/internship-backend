@@ -7,6 +7,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/ingest")
 @RequiredArgsConstructor
@@ -19,6 +21,17 @@ public class IngestController {
     public ResponseEntity<IndicateursDTO> ingestComplet(@RequestBody DonneesCompleteDTO dto) {
         log.info("POST /ingest/complet reçu — date={}", dto.getAnalyseGypse().getDate());
         return ResponseEntity.ok(indicateurService.ingestDonneesCompletes(dto));
+    }
+    @GetMapping("/gypse/dernier")
+    public ResponseEntity<AnalyseGypseDTO> getDernierGypse() {
+        return indicateurService.getDernierGypse()
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/gypse/historique")
+    public ResponseEntity<List<AnalyseGypseDTO>> getHistoriqueGypse() {
+        return ResponseEntity.ok(indicateurService.getHistoriqueGypse());
     }
 
     @PostMapping("/gypse")

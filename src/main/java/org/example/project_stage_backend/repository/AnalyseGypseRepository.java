@@ -13,20 +13,15 @@ import java.util.Optional;
 @Repository
 public interface AnalyseGypseRepository extends JpaRepository<AnalyseGypse, Long> {
 
-    List<AnalyseGypse> findByDateBetweenOrderByDateAsc(LocalDateTime from, LocalDateTime to);
-
-    // Cherche la donnée la plus proche d'une date, dans une fenêtre de ±1 minute
-    @Query("""
-        SELECT a FROM AnalyseGypse a
-        WHERE a.date BETWEEN :debut AND :fin
-        ORDER BY ABS(TIMESTAMPDIFF(SECOND, a.date, :reference)) ASC
-        LIMIT 1
-        """)
+    @Query("SELECT g FROM AnalyseGypse g WHERE g.date BETWEEN :debut AND :fin " +
+            "ORDER BY ABS(FUNCTION('TIMESTAMPDIFF', SECOND, g.date, :dateRef)) ASC LIMIT 1")
     Optional<AnalyseGypse> findClosestToDate(
-            @Param("reference") LocalDateTime reference,
-            @Param("debut") LocalDateTime debut,
-            @Param("fin") LocalDateTime fin
-    );
+            @Param("dateRef") LocalDateTime dateRef,
+            @Param("debut")   LocalDateTime debut,
+            @Param("fin")     LocalDateTime fin);
 
+    // NEW — for REST endpoints
     Optional<AnalyseGypse> findTopByOrderByDateDesc();
+    List<AnalyseGypse>     findTop100ByOrderByDateDesc();
+
 }
