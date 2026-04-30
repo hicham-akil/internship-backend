@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -26,14 +27,13 @@ public class AlerteService {
     private final AlerteRepository alerteRepo;
     private final SimpMessagingTemplate messagingTemplate;
     private final RestTemplate restTemplate;
+    private final Map<String, LocalDateTime> dernierEnvoiN8n = new ConcurrentHashMap<>();
+    private static final long COOLDOWN_MINUTES = 30L;
 
-    // URL du webhook n8n — à configurer dans application.properties
     @Value("${n8n.webhook.url}")
     private String n8nWebhookUrl;
 
-    // ── Seuils ────────────────────────────────────────────────────
-    // WARNING  = dépassement simple
-    // CRITICAL = dépassement de 20% au-delà du seuil
+
 
     private static final Map<String, double[]> SEUILS_MAX = Map.of(
             "SE",               new double[]{1.5,  1.8},   // [warning, critical]
@@ -46,7 +46,7 @@ public class AlerteService {
     );
 
     private static final Map<String, double[]> SEUILS_MIN = Map.of(
-            "RC", new double[]{0.90, 0.85},  // [warning, critical] — en dessous = problème
+            "RC", new double[]{0.90, 0.84},
             "RI", new double[]{0.85, 0.80}
     );
 
@@ -126,6 +126,16 @@ public class AlerteService {
     // ── n8n webhook ───────────────────────────────────────────────
 
     private void notifierN8n(Alerte alerte) {
+        String key = alerte.getTypeIndicateur();
+        LocalDateTime maintenant = LocalDateTime.now();
+        LocalDateTime dernierEnvoi = dernierEnvoiN8n.get(key);
+
+        if (dernierEnvoi != null &&
+                dernierEnvoi.plusMinutes(COOLDOWN_MINUTES).isAfter(maintenant)) {
+            log.info("Cooldown actif pour {} — email ignoré", key);
+            return;
+        }
+
         try {
             Map<String, Object> payload = Map.of(
                     "indicateur", alerte.getTypeIndicateur(),
@@ -136,7 +146,8 @@ public class AlerteService {
                     "unite",      "JFC1 - OCP"
             );
             restTemplate.postForEntity(n8nWebhookUrl, payload, String.class);
-            log.info("n8n notifié pour alerte CRITICAL : {}", alerte.getTypeIndicateur());
+            dernierEnvoiN8n.put(key, maintenant);
+            log.info("n8n notifié pour {} — prochain dans {} min", key, COOLDOWN_MINUTES);
         } catch (Exception e) {
             log.error("Échec notification n8n : {}", e.getMessage());
         }
