@@ -327,4 +327,28 @@ public class IndicateurService {
         if (v == null) return null;
         return Math.round(v * 10000.0) / 10000.0;
     }
+
+
+    @Transactional(readOnly = true)
+    public Optional<AnalysePhosphateDTO> getDernierPhosphate() {
+        return phosphateRepo.findTopByOrderByDateDesc()
+                .map(this::toPhosphateDTO);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AnalysePhosphateDTO> getHistoriquePhosphate() {
+        return phosphateRepo.findTop100ByOrderByDateDesc()
+                .stream()
+                .map(this::toPhosphateDTO)
+                .collect(Collectors.toList());
+    }
+    // NEW: map AnalysePhosphate entity → AnalysePhosphateDTO
+    private AnalysePhosphateDTO toPhosphateDTO(AnalysePhosphate e) {
+        AnalysePhosphateDTO dto = new AnalysePhosphateDTO();
+        dto.setDate(e.getDate());
+        dto.setP2o5Phosphate(e.getP2o5Phosphate());
+        dto.setCaOPhosphate(e.getCaOPhosphate());
+        dto.setQPhosphate(e.getQPhosphate());
+        return dto;
+    }
 }

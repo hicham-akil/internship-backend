@@ -13,6 +13,7 @@ import java.util.Optional;
 @Repository
 public interface AnalysePhosphateRepository extends JpaRepository<AnalysePhosphate, Long> {
 
+    List<AnalysePhosphate> findTop100ByOrderByDateDesc();
     List<AnalysePhosphate> findByDateBetweenOrderByDateAsc(LocalDateTime from, LocalDateTime to);
 
     @Query("""

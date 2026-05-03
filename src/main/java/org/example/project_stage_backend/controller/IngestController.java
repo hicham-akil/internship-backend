@@ -33,7 +33,17 @@ public class IngestController {
     public ResponseEntity<List<AnalyseGypseDTO>> getHistoriqueGypse() {
         return ResponseEntity.ok(indicateurService.getHistoriqueGypse());
     }
+    @GetMapping("/phosphate/dernier")
+    public ResponseEntity<AnalysePhosphateDTO> getDernierPhosphate() {
+        return indicateurService.getDernierPhosphate()
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
 
+    @GetMapping("/phosphate/historique")
+    public ResponseEntity<List<AnalysePhosphateDTO>> getHistoriquePhosphate() {
+        return ResponseEntity.ok(indicateurService.getHistoriquePhosphate());
+    }
     @PostMapping("/gypse")
     public ResponseEntity<IndicateursDTO> ingestGypse(@RequestBody AnalyseGypseDTO dto) {
         log.info("POST /ingest/gypse reçu — date={}", dto.getDate());
