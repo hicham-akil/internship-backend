@@ -27,5 +27,6 @@ public interface ProductionRepository extends JpaRepository<Production, Long> {
             @Param("fin") LocalDateTime fin
     );
     Optional<Production> findTopByOrderByDateDesc();
+    List<Production> findTop100ByOrderByDateDesc();
 }
 

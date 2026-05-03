@@ -39,7 +39,17 @@ public class IngestController {
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.noContent().build());
     }
+    @GetMapping("/production/dernier")
+    public ResponseEntity<ProductionDTO> getDerniereProduction() {
+        return indicateurService.getDerniereProduction()
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
 
+    @GetMapping("/production/historique")
+    public ResponseEntity<List<ProductionDTO>> getHistoriqueProduction() {
+        return ResponseEntity.ok(indicateurService.getHistoriqueProduction());
+    }
     @GetMapping("/phosphate/historique")
     public ResponseEntity<List<AnalysePhosphateDTO>> getHistoriquePhosphate() {
         return ResponseEntity.ok(indicateurService.getHistoriquePhosphate());

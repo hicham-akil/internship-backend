@@ -351,4 +351,25 @@ public class IndicateurService {
         dto.setQPhosphate(e.getQPhosphate());
         return dto;
     }
+
+    @Transactional(readOnly = true)
+    public Optional<ProductionDTO> getDerniereProduction() {
+        return productionRepo.findTopByOrderByDateDesc()
+                .map(this::toProductionDTO);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProductionDTO> getHistoriqueProduction() {
+        return productionRepo.findTop100ByOrderByDateDesc()
+                .stream()
+                .map(this::toProductionDTO)
+                .collect(Collectors.toList());
+    }
+    private ProductionDTO toProductionDTO(Production e) {
+        ProductionDTO dto = new ProductionDTO();
+        dto.setDate(e.getDate());
+        dto.setQP2o529(e.getQP2o529());
+        dto.setQP2o554(e.getQP2o554());
+        return dto;
+    }
 }
