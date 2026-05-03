@@ -38,9 +38,8 @@ public class IndicateurService {
         Production       production = sauvegarderProduction(dto.getProduction());
         Consommation     conso      = sauvegarderConsommation(dto.getConsommation());
 
-        // broadcast raw gypse A/B fields in real time
-        messagingTemplate.convertAndSend("/topic/gypse", dto.getAnalyseGypse());
-        log.info("📡 Gypse A/B broadcasted on /topic/gypse for date={}", gypse.getDate());
+        // ❌ Supprimer cette ligne (déjà fait dans le controller)
+        // messagingTemplate.convertAndSend("/topic/gypse", dto.getAnalyseGypse());
 
         LocalDateTime dateRef = gypse.getDate();
         IndicateursCalcules indicateurs = calculer(dateRef, gypse, phosphate, production, conso);
@@ -48,12 +47,10 @@ public class IndicateurService {
         log.info("✅ Indicateurs calculés et sauvegardés pour date={}", dateRef);
 
         IndicateursDTO result = toDTO(saved);
+
+        // ✅ Broadcast OUTPUT (indicateurs calculés)
         messagingTemplate.convertAndSend("/topic/indicateurs", result);
         alerteService.verifierEtCreerAlertes(saved);
-
-        log.info("PRODUCTION DTO = {}", dto.getProduction());
-        log.info("Q29 = {}", dto.getProduction().getQP2o529());
-        log.info("Q54 = {}", dto.getProduction().getQP2o554());
 
         return result;
     }
