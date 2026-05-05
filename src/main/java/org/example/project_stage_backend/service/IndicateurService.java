@@ -21,7 +21,9 @@ public class IndicateurService {
 
     private static final long TOLERANCE_MINUTES = 1L;
 
-    private final AlerteService                 alerteService;
+    private final AlerteService       alerteService;
+    private final PredictionService   predictionService;
+
     private final AnalyseGypseRepository        gypseRepo;
     private final AnalysePhosphateRepository    phosphateRepo;
     private final ProductionRepository          productionRepo;
@@ -38,8 +40,7 @@ public class IndicateurService {
         Production       production = sauvegarderProduction(dto.getProduction());
         Consommation     conso      = sauvegarderConsommation(dto.getConsommation());
 
-        // ❌ Supprimer cette ligne (déjà fait dans le controller)
-        // messagingTemplate.convertAndSend("/topic/gypse", dto.getAnalyseGypse());
+
 
         LocalDateTime dateRef = gypse.getDate();
         IndicateursCalcules indicateurs = calculer(dateRef, gypse, phosphate, production, conso);
@@ -51,7 +52,7 @@ public class IndicateurService {
         // ✅ Broadcast OUTPUT (indicateurs calculés)
         messagingTemplate.convertAndSend("/topic/indicateurs", result);
         alerteService.verifierEtCreerAlertes(saved);
-
+        predictionService.notifyNewData();
         return result;
     }
 

@@ -36,7 +36,7 @@ public class AlerteService {
 
 
     private static final Map<String, double[]> SEUILS_MAX = Map.of(
-            "SE",               new double[]{1.5,  1.8},   // [warning, critical]
+            "SE",               new double[]{1.5,  1.8},
             "SYN",              new double[]{1.8,  2.2},
             "INT",              new double[]{1.2,  1.5},
             "CONSO_H2SO4",      new double[]{3.2,  3.8},
