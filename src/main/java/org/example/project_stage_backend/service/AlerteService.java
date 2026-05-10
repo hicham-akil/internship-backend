@@ -34,20 +34,19 @@ public class AlerteService {
     private String n8nWebhookUrl;
 
 
-
     private static final Map<String, double[]> SEUILS_MAX = Map.of(
-            "SE",               new double[]{1.5,  1.8},
-            "SYN",              new double[]{1.8,  2.2},
-            "INT",              new double[]{1.2,  1.5},
-            "CONSO_H2SO4",      new double[]{3.2,  3.8},
-            "CONSO_EAU_BRUTE",  new double[]{15.0, 18.0},
-            "CONSO_PHOSPHATES", new double[]{3.5,  4.2},
-            "CONSO_VAPEUR",     new double[]{1.2,  1.5}
+            "SE",               new double[]{0.60, 0.90},   // p90=0.57, p99=1.00
+            "SYN",              new double[]{0.78, 0.86},   // p90=0.77, p99=0.855
+            "INT",              new double[]{0.21, 0.23},   // p90=0.21, p99=0.23
+            "CONSO_H2SO4",      new double[]{3.2,  3.8},    // pas de données dans Excel — inchangé
+            "CONSO_EAU_BRUTE",  new double[]{15.0, 18.0},   // idem
+            "CONSO_PHOSPHATES", new double[]{3.5,  4.2},    // idem
+            "CONSO_VAPEUR",     new double[]{1.2,  1.5}     // idem
     );
 
     private static final Map<String, double[]> SEUILS_MIN = Map.of(
-            "RC", new double[]{0.90, 0.84},
-            "RI", new double[]{0.85, 0.80}
+            "RC", new double[]{0.93, 0.90},   // mean=0.933, min=0.877
+            "RI", new double[]{0.85, 0.80}    // pas de données dans Excel — inchangé
     );
 
     // ── Point d'entrée principal ──────────────────────────────────
