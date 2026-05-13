@@ -21,11 +21,14 @@ public class IndicateurService {
 
     private static final long TOLERANCE_MINUTES = 1L;
 
-    private final AlerteService                 alerteService;
+    private final AlerteService       alerteService;
+    private final PredictionService   predictionService;
+
     private final AnalyseGypseRepository        gypseRepo;
     private final AnalysePhosphateRepository    phosphateRepo;
     private final ProductionRepository          productionRepo;
     private final ConsommationRepository        consommationRepo;
+    private final PerteRepository               perteRepo;
     private final IndicateursCalculesRepository indicateursRepo;
     private final SimpMessagingTemplate         messagingTemplate;
 
@@ -33,39 +36,35 @@ public class IndicateurService {
 
     @Transactional
     public IndicateursDTO ingestDonneesCompletes(DonneesCompleteDTO dto) {
-        AnalyseGypse     gypse      = sauvegarderGypse(dto.getAnalyseGypse());
-        AnalysePhosphate phosphate  = sauvegarderPhosphate(dto.getAnalysePhosphate());
-        Production       production = sauvegarderProduction(dto.getProduction());
-        Consommation     conso      = sauvegarderConsommation(dto.getConsommation());
+        sauvegarderGypse(dto.getAnalyseGypse());
+        sauvegarderPhosphate(dto.getAnalysePhosphate());
+        sauvegarderProduction(dto.getProduction());
+        sauvegarderConsommation(dto.getConsommation());
 
-        // broadcast raw gypse A/B fields in real time
-        messagingTemplate.convertAndSend("/topic/gypse", dto.getAnalyseGypse());
-        log.info("📡 Gypse A/B broadcasted on /topic/gypse for date={}", gypse.getDate());
+        LocalDateTime dateRef = dto.getAnalyseGypse().getDate();
+        return recalculerDepuisDate(dateRef);
+    }
 
-        LocalDateTime dateRef = gypse.getDate();
-        IndicateursCalcules indicateurs = calculer(dateRef, gypse, phosphate, production, conso);
-        IndicateursCalcules saved = indicateursRepo.save(indicateurs);
-        log.info("✅ Indicateurs calculés et sauvegardés pour date={}", dateRef);
+    @Transactional
+    public IndicateursDTO ingestPerte(PerteDTO dto) {
+        Perte perte = perteRepo.save(Perte.builder()
+                .date(dto.getDate())
+                .se(dto.getSe())
+                .syn(dto.getSyn())
+                .intVal(dto.getIntVal())
+                .build());
 
-        IndicateursDTO result = toDTO(saved);
-        messagingTemplate.convertAndSend("/topic/indicateurs", result);
-        alerteService.verifierEtCreerAlertes(saved);
+        messagingTemplate.convertAndSend("/topic/input/perte", dto);
+        log.info("📡 Perte (manual) broadcasted on /topic/input/perte for date={}", perte.getDate());
 
-        log.info("PRODUCTION DTO = {}", dto.getProduction());
-        log.info("Q29 = {}", dto.getProduction().getQP2o529());
-        log.info("Q54 = {}", dto.getProduction().getQP2o554());
-
-        return result;
+        return recalculerDepuisDate(perte.getDate());
     }
 
     @Transactional
     public IndicateursDTO ingestGypse(AnalyseGypseDTO dto) {
         AnalyseGypse gypse = sauvegarderGypse(dto);
-
-        // broadcast raw gypse A/B fields in real time
-        messagingTemplate.convertAndSend("/topic/gypse", dto);
-        log.info("📡 Gypse A/B broadcasted on /topic/gypse for date={}", gypse.getDate());
-
+        messagingTemplate.convertAndSend("/topic/input/gypse", dto);
+        log.info("📡 Gypse broadcasted on /topic/input/gypse for date={}", gypse.getDate());
         return recalculerDepuisDate(gypse.getDate());
     }
 
@@ -106,8 +105,6 @@ public class IndicateurService {
                 .stream().map(this::toDTO).collect(Collectors.toList());
     }
 
-    // ── NEW: fetch latest gypse directly from gypse table ─────────
-
     @Transactional(readOnly = true)
     public Optional<AnalyseGypseDTO> getDernierGypse() {
         return gypseRepo.findTopByOrderByDateDesc().map(this::toGypseDTO);
@@ -117,6 +114,37 @@ public class IndicateurService {
     public List<AnalyseGypseDTO> getHistoriqueGypse() {
         return gypseRepo.findTop100ByOrderByDateDesc()
                 .stream().map(this::toGypseDTO).collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PerteDTO> getDernierPerte() {
+        return perteRepo.findTopByOrderByDateDesc().map(this::toPerteDTO);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PerteDTO> getHistoriquePerte() {
+        return perteRepo.findTop100ByOrderByDateDesc()
+                .stream().map(this::toPerteDTO).collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<AnalysePhosphateDTO> getDernierPhosphate() {
+        return phosphateRepo.findTopByOrderByDateDesc().map(this::toPhosphateDTO);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AnalysePhosphateDTO> getHistoriquePhosphate() {
+        return phosphateRepo.findTop100ByOrderByDateDesc().stream().map(this::toPhosphateDTO).collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ProductionDTO> getDerniereProduction() {
+        return productionRepo.findTopByOrderByDateDesc().map(this::toProductionDTO);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProductionDTO> getHistoriqueProduction() {
+        return productionRepo.findTop100ByOrderByDateDesc().stream().map(this::toProductionDTO).collect(Collectors.toList());
     }
 
     // ── MOTEUR DE CALCUL ──────────────────────────────────────────
@@ -129,18 +157,24 @@ public class IndicateurService {
         Optional<AnalysePhosphate> phosphate  = phosphateRepo.findClosestToDate(dateRef, debut, fin);
         Optional<Production>       production = productionRepo.findClosestToDate(dateRef, debut, fin);
         Optional<Consommation>     conso      = consommationRepo.findClosestToDate(dateRef, debut, fin);
+        Optional<Perte>            perte      = perteRepo.findClosestToDate(dateRef, debut, fin);
 
-        if (gypse.isEmpty() || phosphate.isEmpty() || production.isEmpty() || conso.isEmpty()) {
+        if (gypse.isEmpty() || phosphate.isEmpty() || production.isEmpty() || conso.isEmpty() || perte.isEmpty()) {
             log.warn("⚠ Données incomplètes pour date={} — indicateurs non calculés", dateRef);
             return null;
         }
 
         IndicateursCalcules indicateurs = calculer(
-                dateRef, gypse.get(), phosphate.get(), production.get(), conso.get());
+                dateRef, gypse.get(), phosphate.get(), production.get(), conso.get(), perte.get());
 
-        IndicateursDTO result = toDTO(indicateursRepo.save(indicateurs));
+        IndicateursCalcules saved = indicateursRepo.save(indicateurs);
+        log.info("✅ Indicateurs calculés et sauvegardés pour date={}", dateRef);
+
+        IndicateursDTO result = toDTO(saved);
         messagingTemplate.convertAndSend("/topic/indicateurs", result);
-        alerteService.verifierEtCreerAlertes(indicateurs);
+        alerteService.verifierEtCreerAlertes(saved);
+        predictionService.notifyNewData();
+
         return result;
     }
 
@@ -149,16 +183,14 @@ public class IndicateurService {
             AnalyseGypse gypse,
             AnalysePhosphate phosphate,
             Production production,
-            Consommation conso) {
+            Consommation conso,
+            Perte perte) {
 
         log.info("⚙ CALCULATION START for {}", dateRef);
 
-        // =========================
-        // 1. AVERAGES
-        // =========================
-        Double se     = moyenne(gypse.getSeA(), gypse.getSeB());
-        Double syn    = moyenne(gypse.getSynA(), gypse.getSynB());
-        Double intVal = moyenne(gypse.getIntA(), gypse.getIntB());
+        Double se     = perte.getSe();
+        Double syn    = perte.getSyn();
+        Double intVal = perte.getIntVal();
 
         Double p2o5Gypse = moyenne(gypse.getP2o5GypseA(), gypse.getP2o5GypseB());
         Double caOGypse  = moyenne(gypse.getCaOGypseA(), gypse.getCaOGypseB());
@@ -175,47 +207,23 @@ public class IndicateurService {
         Double phosph = conso.getQtePhosphates();
         Double vapeur = conso.getQteVapeur();
 
-        // =========================
-        // 2. RC
-        // RC = 1 - (p2o5_gypse * CaO_phosphate) / (p2o5_phosphate * CaO_gypse)
-        // =========================
         Double rc = null;
-        if (p2o5Gypse != null && caOPhosphate != null &&
-                p2o5Phosphate != null && caOGypse != null &&
-                p2o5Phosphate != 0 && caOGypse != 0) {
+        if (p2o5Gypse != null && caOPhosphate != null && p2o5Phosphate != null && caOGypse != null && p2o5Phosphate != 0 && caOGypse != 0) {
             rc = 1.0 - ((p2o5Gypse * caOPhosphate) / (p2o5Phosphate * caOGypse));
         }
 
-        // =========================
-        // 3. RI
-        // RI = q29 / ((p2o5_phosphate * Q_phosphate) / 100)
-        // =========================
         Double ri = null;
         if (q29 != null && p2o5Phosphate != null && qPhosphate != null) {
             Double denominator = (p2o5Phosphate * qPhosphate) / 100.0;
-            if (denominator != 0) {
-                ri = q29 / denominator;
-            }
+            if (denominator != 0) ri = q29 / denominator;
         }
 
-        // =========================
-        // 4. CAP
-        // CAP = q54 / q29
-        // =========================
-        Double cap = null;
-        if (q29 != null && q54 != null && q29 != 0) {
-            cap = q54 / q29;
-        }
+        Double cap = (q29 != null && q54 != null && q29 != 0) ? q54 / q29 : null;
 
-        // =========================
-        // 5. CONSUMPTIONS
-        // =========================
         Double consoH2so4    = (h2so4 != null && q29 != null && q29 != 0) ? h2so4 / q29 : null;
         Double consoEauBrute = (eau   != null && q29 != null && q29 != 0) ? eau   / q29 : null;
         Double consoPhos     = (phosph != null && q29 != null && q29 != 0) ? phosph / q29 : null;
         Double consoVapeur   = (vapeur != null && q54 != null && q54 != 0) ? vapeur / q54 : null;
-
-        log.info("📊 RESULTS → RC={} | RI={} | CAP={} | CONSO H2SO4={}", rc, ri, cap, consoH2so4);
 
         return IndicateursCalcules.builder()
                 .date(dateRef)
@@ -237,9 +245,6 @@ public class IndicateurService {
     private AnalyseGypse sauvegarderGypse(AnalyseGypseDTO dto) {
         return gypseRepo.save(AnalyseGypse.builder()
                 .date(dto.getDate())
-                .seA(dto.getSeA()).seB(dto.getSeB())
-                .synA(dto.getSynA()).synB(dto.getSynB())
-                .intA(dto.getIntA()).intB(dto.getIntB())
                 .p2o5GypseA(dto.getP2o5GypseA()).p2o5GypseB(dto.getP2o5GypseB())
                 .caOGypseA(dto.getCaOGypseA()).caOGypseB(dto.getCaOGypseB())
                 .build());
@@ -285,15 +290,37 @@ public class IndicateurService {
         return dto;
     }
 
-    // NEW: map AnalyseGypse entity → AnalyseGypseDTO
     private AnalyseGypseDTO toGypseDTO(AnalyseGypse e) {
         AnalyseGypseDTO dto = new AnalyseGypseDTO();
         dto.setDate(e.getDate());
-        dto.setSeA(e.getSeA());           dto.setSeB(e.getSeB());
-        dto.setSynA(e.getSynA());         dto.setSynB(e.getSynB());
-        dto.setIntA(e.getIntA());         dto.setIntB(e.getIntB());
         dto.setP2o5GypseA(e.getP2o5GypseA()); dto.setP2o5GypseB(e.getP2o5GypseB());
         dto.setCaOGypseA(e.getCaOGypseA());   dto.setCaOGypseB(e.getCaOGypseB());
+        return dto;
+    }
+
+    private PerteDTO toPerteDTO(Perte e) {
+        return PerteDTO.builder()
+                .date(e.getDate())
+                .se(e.getSe())
+                .syn(e.getSyn())
+                .intVal(e.getIntVal())
+                .build();
+    }
+
+    private AnalysePhosphateDTO toPhosphateDTO(AnalysePhosphate e) {
+        AnalysePhosphateDTO dto = new AnalysePhosphateDTO();
+        dto.setDate(e.getDate());
+        dto.setP2o5Phosphate(e.getP2o5Phosphate());
+        dto.setCaOPhosphate(e.getCaOPhosphate());
+        dto.setQPhosphate(e.getQPhosphate());
+        return dto;
+    }
+
+    private ProductionDTO toProductionDTO(Production e) {
+        ProductionDTO dto = new ProductionDTO();
+        dto.setDate(e.getDate());
+        dto.setQP2o529(e.getQP2o529());
+        dto.setQP2o554(e.getQP2o554());
         return dto;
     }
 
@@ -306,70 +333,8 @@ public class IndicateurService {
         return (a + b) / 2.0;
     }
 
-    private Double somme(Double a, Double b) {
-        if (a == null && b == null) return null;
-        if (a == null) return b;
-        if (b == null) return a;
-        return a + b;
-    }
-
-    private Double diviser(Double n, Double d) {
-        if (n == null || d == null || d == 0.0) return null;
-        return n / d;
-    }
-
-    private Double diviserPourcentage(Double n, Double d) {
-        Double r = diviser(n, d);
-        return r == null ? null : r * 100.0;
-    }
-
     private Double arrondir(Double v) {
         if (v == null) return null;
         return Math.round(v * 10000.0) / 10000.0;
-    }
-
-
-    @Transactional(readOnly = true)
-    public Optional<AnalysePhosphateDTO> getDernierPhosphate() {
-        return phosphateRepo.findTopByOrderByDateDesc()
-                .map(this::toPhosphateDTO);
-    }
-
-    @Transactional(readOnly = true)
-    public List<AnalysePhosphateDTO> getHistoriquePhosphate() {
-        return phosphateRepo.findTop100ByOrderByDateDesc()
-                .stream()
-                .map(this::toPhosphateDTO)
-                .collect(Collectors.toList());
-    }
-    // NEW: map AnalysePhosphate entity → AnalysePhosphateDTO
-    private AnalysePhosphateDTO toPhosphateDTO(AnalysePhosphate e) {
-        AnalysePhosphateDTO dto = new AnalysePhosphateDTO();
-        dto.setDate(e.getDate());
-        dto.setP2o5Phosphate(e.getP2o5Phosphate());
-        dto.setCaOPhosphate(e.getCaOPhosphate());
-        dto.setQPhosphate(e.getQPhosphate());
-        return dto;
-    }
-
-    @Transactional(readOnly = true)
-    public Optional<ProductionDTO> getDerniereProduction() {
-        return productionRepo.findTopByOrderByDateDesc()
-                .map(this::toProductionDTO);
-    }
-
-    @Transactional(readOnly = true)
-    public List<ProductionDTO> getHistoriqueProduction() {
-        return productionRepo.findTop100ByOrderByDateDesc()
-                .stream()
-                .map(this::toProductionDTO)
-                .collect(Collectors.toList());
-    }
-    private ProductionDTO toProductionDTO(Production e) {
-        ProductionDTO dto = new ProductionDTO();
-        dto.setDate(e.getDate());
-        dto.setQP2o529(e.getQP2o529());
-        dto.setQP2o554(e.getQP2o554());
-        return dto;
     }
 }
