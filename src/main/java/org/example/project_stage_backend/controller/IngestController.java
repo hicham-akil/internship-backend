@@ -63,6 +63,12 @@ public class IngestController {
         return result != null ? ResponseEntity.ok(result) : ResponseEntity.accepted().build();
     }
 
+    @PostMapping("/perte")
+    public ResponseEntity<IndicateursDTO> ingestPerte(@RequestBody PerteDTO dto) {
+        IndicateursDTO result = indicateurService.ingestPerte(dto);
+        return result != null ? ResponseEntity.ok(result) : ResponseEntity.accepted().build();
+    }
+
     // ── GET endpoints (inchangés) ──────────────────────────────
     @GetMapping("/gypse/dernier")
     public ResponseEntity<AnalyseGypseDTO> getDernierGypse() {
@@ -74,6 +80,18 @@ public class IngestController {
     @GetMapping("/gypse/historique")
     public ResponseEntity<List<AnalyseGypseDTO>> getHistoriqueGypse() {
         return ResponseEntity.ok(indicateurService.getHistoriqueGypse());
+    }
+
+    @GetMapping("/perte/dernier")
+    public ResponseEntity<PerteDTO> getDernierPerte() {
+        return indicateurService.getDernierPerte()
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
+
+    @GetMapping("/perte/historique")
+    public ResponseEntity<List<PerteDTO>> getHistoriquePerte() {
+        return ResponseEntity.ok(indicateurService.getHistoriquePerte());
     }
 
     @GetMapping("/phosphate/dernier")
