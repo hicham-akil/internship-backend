@@ -227,9 +227,6 @@ public class IndicateurService {
 
         return IndicateursCalcules.builder()
                 .date(dateRef)
-                .se(arrondir(se))
-                .syn(arrondir(syn))
-                .intVal(arrondir(intVal))
                 .rc(arrondir(rc))
                 .ri(arrondir(ri))
                 .cap(arrondir(cap))
@@ -281,7 +278,7 @@ public class IndicateurService {
         IndicateursDTO dto = new IndicateursDTO();
         dto.setId(e.getId());
         dto.setDate(e.getDate());
-        dto.setSe(e.getSe());   dto.setSyn(e.getSyn());   dto.setIntVal(e.getIntVal());
+
         dto.setRc(e.getRc());   dto.setRi(e.getRi());     dto.setCap(e.getCap());
         dto.setConsoH2so4(e.getConsoH2so4());
         dto.setConsoEauBrute(e.getConsoEauBrute());
@@ -336,5 +333,10 @@ public class IndicateurService {
     private Double arrondir(Double v) {
         if (v == null) return null;
         return Math.round(v * 10000.0) / 10000.0;
+    }
+    @Transactional(readOnly = true)
+    public List<PerteDTO> getPertesSurPeriode(LocalDateTime debut, LocalDateTime fin) {
+        return perteRepo.findByDateBetweenOrderByDateAsc(debut, fin)
+                .stream().map(this::toPerteDTO).collect(Collectors.toList());
     }
 }

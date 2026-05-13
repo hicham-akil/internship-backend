@@ -1,16 +1,19 @@
 package org.example.project_stage_backend.service;
 
-import com.itextpdf.text.*;
-import com.itextpdf.text.pdf.*;
-import com.itextpdf.text.pdf.draw.LineSeparator;
 import lombok.RequiredArgsConstructor;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.usermodel.*;
 import org.example.project_stage_backend.dto.IndicateursDTO;
+import org.example.project_stage_backend.dto.PerteDTO;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -21,335 +24,383 @@ public class RapportService {
     private static final DateTimeFormatter FMT =
             DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
-    // Colors
-    private static final BaseColor DARK_BG    = new BaseColor(6, 13, 26);
-    private static final BaseColor EMERALD    = new BaseColor(0, 232, 122);
-    private static final BaseColor AMBER      = new BaseColor(251, 191, 36);
-    private static final BaseColor SLATE_400  = new BaseColor(148, 163, 184);
-    private static final BaseColor SLATE_700  = new BaseColor(51, 65, 85);
-    private static final BaseColor SLATE_900  = new BaseColor(15, 23, 42);
+    // Merged view of both tables for one timestamp
+    record LigneRapport(
+            LocalDateTime date,
+            // Pertes
+            Double se, Double syn, Double intVal,
+            // Indicateurs calculés
+            Double rc, Double ri, Double cap,
+            Double consoH2so4, Double consoEauBrute,
+            Double consoPhosphates, Double consoVapeur
+    ) {}
 
-    public byte[] genererRapport24h() throws DocumentException {
+    public byte[] genererRapport24h() throws Exception {
         LocalDateTime fin   = LocalDateTime.now();
         LocalDateTime debut = fin.minusHours(24);
 
-        List<IndicateursDTO> donnees =
+        List<IndicateursDTO> indicateurs =
                 indicateurService.getIndicateursSurPeriode(debut, fin);
 
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        Document doc = new Document(PageSize.A4, 40, 40, 60, 40);
-        PdfWriter writer = PdfWriter.getInstance(doc, out);
+        // Fetch pertes over same period via existing repo method exposed in service
+        List<PerteDTO> pertes =
+                indicateurService.getPertesSurPeriode(debut, fin);
 
-        // Header/Footer
-        writer.setPageEvent(new HeaderFooter());
+        // Join by closest date (within 1 min) — simple approach: map pertes by truncated minute
+        Map<LocalDateTime, PerteDTO> perteByMinute = pertes.stream()
+                .collect(Collectors.toMap(
+                        p -> p.getDate().withSecond(0).withNano(0),
+                        p -> p,
+                        (a, b) -> a));
 
-        doc.open();
+        List<LigneRapport> lignes = indicateurs.stream().map(ind -> {
+            LocalDateTime key = ind.getDate().withSecond(0).withNano(0);
+            PerteDTO p = perteByMinute.get(key);
+            return new LigneRapport(
+                    ind.getDate(),
+                    p != null ? p.getSe()     : null,
+                    p != null ? p.getSyn()    : null,
+                    p != null ? p.getIntVal() : null,
+                    ind.getRc(), ind.getRi(), ind.getCap(),
+                    ind.getConsoH2so4(), ind.getConsoEauBrute(),
+                    ind.getConsoPhosphates(), ind.getConsoVapeur()
+            );
+        }).collect(Collectors.toList());
 
-        // ── HEADER ────────────────────────────────────────────
-        ajouterHeader(doc, debut, fin, donnees.size());
+        try (XSSFWorkbook wb = new XSSFWorkbook();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
 
-        // ── RÉSUMÉ STATISTIQUES ────────────────────────────────
-        ajouterResume(doc, donnees);
+            CellStyle headerStyle   = createHeaderStyle(wb);
+            CellStyle titleStyle    = createTitleStyle(wb);
+            CellStyle subTitleStyle = createSubTitleStyle(wb);
+            CellStyle normalStyle   = createNormalStyle(wb, false);
+            CellStyle alertStyle    = createNormalStyle(wb, true);
+            CellStyle altStyle      = createAltRowStyle(wb);
+            CellStyle sectionStyle  = createSectionStyle(wb);
+            CellStyle infoValStyle  = createInfoValueStyle(wb);
 
-        // ── TABLEAU DÉTAILLÉ ───────────────────────────────────
-        ajouterTableau(doc, donnees);
+            // ── Sheet 1 : Résumé ────────────────────────────────
+            XSSFSheet resume = wb.createSheet("Résumé");
+            resume.setColumnWidth(0, 9000);
+            for (int c = 1; c <= 4; c++) resume.setColumnWidth(c, 4000);
 
-        // ── ALERTES SEUILS ─────────────────────────────────────
-        ajouterAnalyseAlertes(doc, donnees);
+            int row = 0;
 
-        doc.close();
-        return out.toByteArray();
-    }
+            Row rTitre = resume.createRow(row++);
+            rTitre.setHeightInPoints(30);
+            Cell cTitre = rTitre.createCell(0);
+            cTitre.setCellValue("RAPPORT JOURNALIER — JFC3");
+            cTitre.setCellStyle(titleStyle);
+            resume.addMergedRegion(new CellRangeAddress(0, 0, 0, 4));
 
-    private void ajouterHeader(Document doc, LocalDateTime debut,
-                               LocalDateTime fin, int nbPoints)
-            throws DocumentException {
+            Row rSub = resume.createRow(row++);
+            Cell cSub = rSub.createCell(0);
+            cSub.setCellValue("Acide Phosphorique — Unité JFC1");
+            cSub.setCellStyle(subTitleStyle);
+            resume.addMergedRegion(new CellRangeAddress(1, 1, 0, 4));
 
-        // Titre principal
-        Font titreFont = new Font(Font.FontFamily.HELVETICA, 22, Font.BOLD, EMERALD);
-        Paragraph titre = new Paragraph("RAPPORT JOURNALIER — JFC3", titreFont);
-        titre.setAlignment(Element.ALIGN_CENTER);
-        titre.setSpacingAfter(4);
-        doc.add(titre);
+            row++;
 
-        Font subFont = new Font(Font.FontFamily.HELVETICA, 10, Font.NORMAL, SLATE_400);
-        Paragraph sub = new Paragraph("Acide Phosphorique — Unité JFC1", subFont);
-        sub.setAlignment(Element.ALIGN_CENTER);
-        sub.setSpacingAfter(16);
-        doc.add(sub);
+            Row rInfo = resume.createRow(row++);
+            rInfo.setHeightInPoints(36);
+            createInfoCell(wb, rInfo, 0, "PÉRIODE DÉBUT", debut.format(FMT), infoValStyle);
+            createInfoCell(wb, rInfo, 1, "PÉRIODE FIN",   fin.format(FMT),   infoValStyle);
+            createInfoCell(wb, rInfo, 2, "RELEVÉS",        String.valueOf(lignes.size()), infoValStyle);
 
-        // Ligne séparatrice
-        LineSeparator sep = new LineSeparator(1f, 100f, EMERALD, Element.ALIGN_CENTER, -2);
-        doc.add(new Chunk(sep));
+            row++;
 
-        // Infos période
-        PdfPTable infoTable = new PdfPTable(3);
-        infoTable.setWidthPercentage(100);
-        infoTable.setSpacingBefore(12);
-        infoTable.setSpacingAfter(20);
+            // ── Stats Pertes ────────────────────────────────────
+            addSectionTitle(resume, row++, "◉  RÉSUMÉ — PERTES GYPSE", sectionStyle);
 
-        ajouterInfoCell(infoTable, "PÉRIODE DÉBUT", debut.format(FMT));
-        ajouterInfoCell(infoTable, "PÉRIODE FIN",   fin.format(FMT));
-        ajouterInfoCell(infoTable, "RELEVÉS",        String.valueOf(nbPoints));
+            Row rHdr1 = resume.createRow(row++);
+            for (int i = 0; i < new String[]{"INDICATEUR","MIN","MAX","MOYENNE","SEUIL"}.length; i++) {
+                Cell c = rHdr1.createCell(i);
+                c.setCellValue(new String[]{"INDICATEUR","MIN","MAX","MOYENNE","SEUIL"}[i]);
+                c.setCellStyle(headerStyle);
+            }
 
-        doc.add(infoTable);
-    }
+            if (!lignes.isEmpty()) {
+                addStatRow(resume, row++, "SE — Perte Séchage",
+                        calcStat(lignes, LigneRapport::se), "≤ 1.5", normalStyle, alertStyle, s -> s.avg() > 1.5);
+                addStatRow(resume, row++, "SYN — Perte Synthèse",
+                        calcStat(lignes, LigneRapport::syn), "≤ 1.8", normalStyle, alertStyle, s -> s.avg() > 1.8);
+                addStatRow(resume, row++, "INT — Perte Intermédiaire",
+                        calcStat(lignes, LigneRapport::intVal), "≤ 1.2", normalStyle, alertStyle, s -> s.avg() > 1.2);
+            }
 
-    private void ajouterInfoCell(PdfPTable table, String label, String value) {
-        PdfPCell cell = new PdfPCell();
-        cell.setBackgroundColor(SLATE_900);
-        cell.setBorderColor(SLATE_700);
-        cell.setPadding(10);
+            row++;
 
-        Font lFont = new Font(Font.FontFamily.HELVETICA, 7, Font.BOLD, SLATE_400);
-        Font vFont = new Font(Font.FontFamily.HELVETICA, 13, Font.BOLD, EMERALD);
+            // ── Stats Indicateurs ───────────────────────────────
+            addSectionTitle(resume, row++, "◉  RÉSUMÉ — INDICATEURS CALCULÉS", sectionStyle);
 
-        Paragraph p = new Paragraph();
-        p.add(new Chunk(label + "\n", lFont));
-        p.add(new Chunk(value, vFont));
-        cell.addElement(p);
-        table.addCell(cell);
-    }
+            Row rHdr2 = resume.createRow(row++);
+            for (int i = 0; i < new String[]{"INDICATEUR","MIN","MAX","MOYENNE","SEUIL"}.length; i++) {
+                Cell c = rHdr2.createCell(i);
+                c.setCellValue(new String[]{"INDICATEUR","MIN","MAX","MOYENNE","SEUIL"}[i]);
+                c.setCellStyle(headerStyle);
+            }
 
-    private void ajouterResume(Document doc, List<IndicateursDTO> donnees)
-            throws DocumentException {
+            if (!lignes.isEmpty()) {
+                addStatRow(resume, row++, "RC — Rendement Conc.",
+                        calcStat(lignes, LigneRapport::rc), "≥ 0.90", normalStyle, alertStyle, s -> s.avg() < 0.90);
+                addStatRow(resume, row++, "RI — Rendement Incorp.",
+                        calcStat(lignes, LigneRapport::ri), "≥ 0.85", normalStyle, alertStyle, s -> s.avg() < 0.85);
+                addStatRow(resume, row++, "CAP — Capacité Prod.",
+                        calcStat(lignes, LigneRapport::cap), "≥ 1.0",  normalStyle, alertStyle, s -> s.avg() < 1.0);
+            }
 
-        if (donnees.isEmpty()) return;
+            row++;
 
-        Font sectionFont = new Font(Font.FontFamily.HELVETICA, 11, Font.BOLD, EMERALD);
-        Paragraph section = new Paragraph("◉  RÉSUMÉ STATISTIQUES", sectionFont);
-        section.setSpacingAfter(10);
-        doc.add(section);
+            // ── Alertes ─────────────────────────────────────────
+            addSectionTitle(resume, row++, "⚠  ANALYSE DES DÉPASSEMENTS", sectionStyle);
 
-        // Calcul stats
-        StatBlock se   = calcStat(donnees, d -> d.getSe());
-        StatBlock syn  = calcStat(donnees, d -> d.getSyn());
-        StatBlock intv = calcStat(donnees, d -> d.getIntVal());
-        StatBlock rc   = calcStat(donnees, d -> d.getRc());
-        StatBlock ri   = calcStat(donnees, d -> d.getRi());
-        StatBlock cap  = calcStat(donnees, d -> d.getCap());
+            Row rAHdr = resume.createRow(row++);
+            for (int i = 0; i < new String[]{"INDICATEUR","NB DÉPASSEMENTS","TOTAL","TAUX (%)","CRITIQUE"}.length; i++) {
+                Cell c = rAHdr.createCell(i);
+                c.setCellValue(new String[]{"INDICATEUR","NB DÉPASSEMENTS","TOTAL","TAUX (%)","CRITIQUE"}[i]);
+                c.setCellStyle(headerStyle);
+            }
 
-        PdfPTable table = new PdfPTable(5);
-        table.setWidthPercentage(100);
-        table.setWidths(new float[]{2.5f, 1.5f, 1.5f, 1.5f, 1.5f});
-        table.setSpacingAfter(20);
+            int total = lignes.size();
+            addAlerteRow(resume, row++, "SE  (≤ 1.5)",  count(lignes, l -> l.se()     != null && l.se()     > 1.5),  total, normalStyle, alertStyle);
+            addAlerteRow(resume, row++, "SYN (≤ 1.8)",  count(lignes, l -> l.syn()    != null && l.syn()    > 1.8),  total, normalStyle, alertStyle);
+            addAlerteRow(resume, row++, "INT (≤ 1.2)",  count(lignes, l -> l.intVal() != null && l.intVal() > 1.2),  total, normalStyle, alertStyle);
+            addAlerteRow(resume, row++, "RC  (≥ 0.90)", count(lignes, l -> l.rc()     != null && l.rc()     < 0.90), total, normalStyle, alertStyle);
+            addAlerteRow(resume, row++, "RI  (≥ 0.85)", count(lignes, l -> l.ri()     != null && l.ri()     < 0.85), total, normalStyle, alertStyle);
 
-        // En-tête
-        String[] headers = {"INDICATEUR", "MIN", "MAX", "MOYENNE", "SEUIL"};
-        for (String h : headers) {
-            PdfPCell c = new PdfPCell(new Phrase(h,
-                    new Font(Font.FontFamily.HELVETICA, 8, Font.BOLD, EMERALD)));
-            c.setBackgroundColor(SLATE_900);
-            c.setBorderColor(SLATE_700);
-            c.setPadding(8);
-            c.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(c);
-        }
+            // ── Sheet 2 : Historique ────────────────────────────
+            XSSFSheet hist = wb.createSheet("Historique Détaillé");
+            hist.setColumnWidth(0, 6500);
+            int[] colWidths = {3200, 3200, 3200, 3200, 3200, 3200, 3500, 3500, 3500, 3500};
+            for (int i = 0; i < colWidths.length; i++) hist.setColumnWidth(i + 1, colWidths[i]);
 
-        // Lignes
-        ajouterLigneStats(table, "SE — Perte Séchage",       se,   "≤ 1.5",  se.avg > 1.5);
-        ajouterLigneStats(table, "SYN — Perte Synthèse",     syn,  "≤ 1.8",  syn.avg > 1.8);
-        ajouterLigneStats(table, "INT — Perte Intermédiaire",intv, "≤ 1.2",  intv.avg > 1.2);
-        ajouterLigneStats(table, "RC — Rendement Conc.",     rc,   "≥ 0.90", rc.avg < 0.90);
-        ajouterLigneStats(table, "RI — Rendement Incorp.",   ri,   "≥ 0.85", ri.avg < 0.85);
-        ajouterLigneStats(table, "CAP — Capacité Prod.",     cap,  "≥ 1.0",  cap.avg < 1.0);
+            hist.createFreezePane(0, 1);
 
-        doc.add(table);
-    }
+            Row hHdr = hist.createRow(0);
+            String[] cols = {"DATE/HEURE","SE","SYN","INT","RC","RI","CAP","H₂SO₄","EAU BRUTE","PHOSPHATES","VAPEUR"};
+            for (int i = 0; i < cols.length; i++) {
+                Cell c = hHdr.createCell(i);
+                c.setCellValue(cols[i]);
+                c.setCellStyle(headerStyle);
+            }
 
-    private void ajouterLigneStats(PdfPTable table, String nom,
-                                   StatBlock s, String seuil, boolean alerte) {
-        BaseColor rowBg = alerte ? new BaseColor(45, 25, 0) : DARK_BG;
-        BaseColor valColor = alerte ? AMBER : SLATE_400;
+            boolean pair = false;
+            int hRow = 1;
+            for (LigneRapport l : lignes) {
+                Row r = hist.createRow(hRow++);
+                CellStyle base = pair ? altStyle : normalStyle;
+                pair = !pair;
 
-        Font nomFont = new Font(Font.FontFamily.HELVETICA, 8, Font.BOLD,
-                alerte ? AMBER : SLATE_400);
-        Font valFont = new Font(Font.FontFamily.HELVETICA, 9, Font.BOLD, valColor);
+                setCellStr(r, 0,  l.date() != null ? l.date().format(FMT) : "—", base);
+                setCellNum(r, 1,  l.se(),        base, alertStyle, v -> v > 1.5);
+                setCellNum(r, 2,  l.syn(),       base, alertStyle, v -> v > 1.8);
+                setCellNum(r, 3,  l.intVal(),    base, alertStyle, v -> v > 1.2);
+                setCellNum(r, 4,  l.rc(),        base, alertStyle, v -> v < 0.90);
+                setCellNum(r, 5,  l.ri(),        base, alertStyle, v -> v < 0.85);
+                setCellNum(r, 6,  l.cap(),       base, alertStyle, v -> v < 1.0);
+                setCellNum(r, 7,  l.consoH2so4(),      base, alertStyle, v -> v > 3.2);
+                setCellNum(r, 8,  l.consoEauBrute(),   base, alertStyle, v -> false);
+                setCellNum(r, 9,  l.consoPhosphates(), base, alertStyle, v -> false);
+                setCellNum(r, 10, l.consoVapeur(),     base, alertStyle, v -> false);
+            }
 
-        String[] vals = {
-                nom,
-                String.format("%.4f", s.min),
-                String.format("%.4f", s.max),
-                String.format("%.4f", s.avg),
-                seuil + (alerte ? " ⚠" : " ✓")
-        };
+            hist.setAutoFilter(new CellRangeAddress(0, 0, 0, 10));
 
-        for (int i = 0; i < vals.length; i++) {
-            PdfPCell c = new PdfPCell(new Phrase(vals[i], i == 0 ? nomFont : valFont));
-            c.setBackgroundColor(rowBg);
-            c.setBorderColor(SLATE_700);
-            c.setPadding(7);
-            c.setHorizontalAlignment(i == 0 ? Element.ALIGN_LEFT : Element.ALIGN_CENTER);
-            table.addCell(c);
-        }
-    }
-
-    private void ajouterTableau(Document doc, List<IndicateursDTO> donnees)
-            throws DocumentException {
-
-        Font sectionFont = new Font(Font.FontFamily.HELVETICA, 11, Font.BOLD, EMERALD);
-        Paragraph section = new Paragraph("◈  HISTORIQUE DÉTAILLÉ", sectionFont);
-        section.setSpacingAfter(10);
-        doc.add(section);
-
-        PdfPTable table = new PdfPTable(8);
-        table.setWidthPercentage(100);
-        table.setWidths(new float[]{2f, 1f, 1f, 1f, 1f, 1f, 1f, 1f});
-        table.setSpacingAfter(20);
-
-        String[] cols = {"DATE/HEURE", "SE", "SYN", "INT", "RC", "RI", "CAP", "H₂SO₄"};
-        for (String col : cols) {
-            PdfPCell c = new PdfPCell(new Phrase(col,
-                    new Font(Font.FontFamily.HELVETICA, 7, Font.BOLD, EMERALD)));
-            c.setBackgroundColor(SLATE_900);
-            c.setBorderColor(SLATE_700);
-            c.setPadding(6);
-            c.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(c);
-        }
-
-        // Max 50 lignes pour ne pas surcharger
-        List<IndicateursDTO> sample = donnees.size() > 50
-                ? donnees.subList(donnees.size() - 50, donnees.size())
-                : donnees;
-
-        boolean pair = false;
-        for (IndicateursDTO d : sample) {
-            BaseColor bg = pair ? SLATE_900 : DARK_BG;
-            pair = !pair;
-
-            ajouterCellTableau(table, d.getDate() != null
-                    ? d.getDate().format(FMT) : "—", bg, false, false);
-            ajouterCellTableau(table, fmt(d.getSe()),       bg, d.getSe()  != null && d.getSe()  > 1.5,  false);
-            ajouterCellTableau(table, fmt(d.getSyn()),      bg, d.getSyn() != null && d.getSyn() > 1.8,  false);
-            ajouterCellTableau(table, fmt(d.getIntVal()),   bg, d.getIntVal() != null && d.getIntVal() > 1.2, false);
-            ajouterCellTableau(table, fmt(d.getRc()),       bg, d.getRc()  != null && d.getRc()  < 0.90, false);
-            ajouterCellTableau(table, fmt(d.getRi()),       bg, d.getRi()  != null && d.getRi()  < 0.85, false);
-            ajouterCellTableau(table, fmt(d.getCap()),      bg, d.getCap() != null && d.getCap() < 1.0,  false);
-            ajouterCellTableau(table, fmt(d.getConsoH2so4()), bg, d.getConsoH2so4() != null && d.getConsoH2so4() > 3.2, false);
-        }
-
-        doc.add(table);
-    }
-
-    private void ajouterCellTableau(PdfPTable table, String val,
-                                    BaseColor bg, boolean alerte, boolean header) {
-        Font f = new Font(Font.FontFamily.HELVETICA, 7,
-                alerte ? Font.BOLD : Font.NORMAL,
-                alerte ? AMBER : SLATE_400);
-        PdfPCell c = new PdfPCell(new Phrase(val, f));
-        c.setBackgroundColor(alerte ? new BaseColor(45, 25, 0) : bg);
-        c.setBorderColor(SLATE_700);
-        c.setPadding(5);
-        c.setHorizontalAlignment(Element.ALIGN_CENTER);
-        table.addCell(c);
-    }
-
-    private void ajouterAnalyseAlertes(Document doc, List<IndicateursDTO> donnees)
-            throws DocumentException {
-
-        long nbSE  = donnees.stream().filter(d -> d.getSe()  != null && d.getSe()  > 1.5).count();
-        long nbSYN = donnees.stream().filter(d -> d.getSyn() != null && d.getSyn() > 1.8).count();
-        long nbINT = donnees.stream().filter(d -> d.getIntVal() != null && d.getIntVal() > 1.2).count();
-        long nbRC  = donnees.stream().filter(d -> d.getRc()  != null && d.getRc()  < 0.90).count();
-        long nbRI  = donnees.stream().filter(d -> d.getRi()  != null && d.getRi()  < 0.85).count();
-
-        Font sectionFont = new Font(Font.FontFamily.HELVETICA, 11, Font.BOLD, EMERALD);
-        Paragraph section = new Paragraph("⚠  ANALYSE DES DÉPASSEMENTS", sectionFont);
-        section.setSpacingAfter(10);
-        doc.add(section);
-
-        PdfPTable table = new PdfPTable(3);
-        table.setWidthPercentage(100);
-        table.setSpacingAfter(20);
-
-        String[] hdr = {"INDICATEUR", "NB DÉPASSEMENTS / " + donnees.size(), "TAUX"};
-        for (String h : hdr) {
-            PdfPCell c = new PdfPCell(new Phrase(h,
-                    new Font(Font.FontFamily.HELVETICA, 8, Font.BOLD, EMERALD)));
-            c.setBackgroundColor(SLATE_900);
-            c.setBorderColor(SLATE_700);
-            c.setPadding(8);
-            c.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(c);
-        }
-
-        ajouterLigneAlerte(table, "SE  (seuil ≤ 1.5)", nbSE,  donnees.size());
-        ajouterLigneAlerte(table, "SYN (seuil ≤ 1.8)", nbSYN, donnees.size());
-        ajouterLigneAlerte(table, "INT (seuil ≤ 1.2)", nbINT, donnees.size());
-        ajouterLigneAlerte(table, "RC  (seuil ≥ 0.90)", nbRC, donnees.size());
-        ajouterLigneAlerte(table, "RI  (seuil ≥ 0.85)", nbRI, donnees.size());
-
-        doc.add(table);
-
-        // Note de bas de rapport
-        Font noteFont = new Font(Font.FontFamily.HELVETICA, 8, Font.ITALIC, SLATE_400);
-        Paragraph note = new Paragraph(
-                "Rapport généré automatiquement le " +
-                        LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy à HH:mm:ss")) +
-                        " — Système JFC1 Dashboard", noteFont);
-        note.setAlignment(Element.ALIGN_CENTER);
-        doc.add(note);
-    }
-
-    private void ajouterLigneAlerte(PdfPTable table, String nom,
-                                    long nb, int total) {
-        double taux = total > 0 ? (nb * 100.0 / total) : 0;
-        boolean critique = taux > 20;
-
-        Font f = new Font(Font.FontFamily.HELVETICA, 9,
-                critique ? Font.BOLD : Font.NORMAL,
-                critique ? AMBER : SLATE_400);
-
-        String[] vals = { nom, nb + " fois", String.format("%.1f%%", taux) };
-        for (String v : vals) {
-            PdfPCell c = new PdfPCell(new Phrase(v, f));
-            c.setBackgroundColor(critique ? new BaseColor(45, 25, 0) : DARK_BG);
-            c.setBorderColor(SLATE_700);
-            c.setPadding(7);
-            c.setHorizontalAlignment(Element.ALIGN_CENTER);
-            table.addCell(c);
+            wb.write(out);
+            return out.toByteArray();
         }
     }
 
     // ── Helpers ───────────────────────────────────────────────────
-    private String fmt(Double v) {
-        return v != null ? String.format("%.4f", v) : "—";
+
+    private void addSectionTitle(Sheet sheet, int rowIdx, String title, CellStyle style) {
+        Row r = sheet.createRow(rowIdx);
+        Cell c = r.createCell(0);
+        c.setCellValue(title);
+        c.setCellStyle(style);
+        sheet.addMergedRegion(new CellRangeAddress(rowIdx, rowIdx, 0, 4));
     }
 
-    private StatBlock calcStat(List<IndicateursDTO> list,
-                               java.util.function.Function<IndicateursDTO, Double> getter) {
-        double[] vals = list.stream()
-                .map(getter)
-                .filter(v -> v != null)
-                .mapToDouble(Double::doubleValue)
-                .toArray();
+    private void addStatRow(Sheet sheet, int rowIdx, String nom, StatBlock s,
+                            String seuil, CellStyle normal, CellStyle alert,
+                            java.util.function.Predicate<StatBlock> alertPred) {
+        boolean isAlert = alertPred.test(s);
+        CellStyle style = isAlert ? alert : normal;
+        Row r = sheet.createRow(rowIdx);
+        setCellStr(r, 0, nom, style);
+        setCellDbl(r, 1, s.min(), style);
+        setCellDbl(r, 2, s.max(), style);
+        setCellDbl(r, 3, s.avg(), style);
+        setCellStr(r, 4, seuil + (isAlert ? " ⚠" : " ✓"), style);
+    }
+
+    private void addAlerteRow(Sheet sheet, int rowIdx, String nom, long nb, int total,
+                              CellStyle normal, CellStyle alert) {
+        double taux = total > 0 ? (nb * 100.0 / total) : 0;
+        boolean critique = taux > 20;
+        CellStyle style = critique ? alert : normal;
+        Row r = sheet.createRow(rowIdx);
+        setCellStr(r, 0, nom, style);
+        setCellDbl(r, 1, nb, style);
+        setCellDbl(r, 2, total, style);
+        setCellDbl(r, 3, Math.round(taux * 10.0) / 10.0, style);
+        setCellStr(r, 4, critique ? "OUI ⚠" : "NON ✓", style);
+    }
+
+    private void createInfoCell(XSSFWorkbook wb, Row row, int col,
+                                String label, String value, CellStyle valStyle) {
+        XSSFRichTextString rts = new XSSFRichTextString();
+        XSSFFont lf = wb.createFont();
+        lf.setFontHeightInPoints((short) 7); lf.setBold(true);
+        lf.setColor(new XSSFColor(new byte[]{(byte)148,(byte)163,(byte)184}, null));
+        XSSFFont vf = wb.createFont();
+        vf.setFontHeightInPoints((short) 12); vf.setBold(true);
+        vf.setColor(new XSSFColor(new byte[]{0,(byte)232,122}, null));
+        rts.append(label + "\n", lf);
+        rts.append(value, vf);
+        Cell c = row.createCell(col);
+        c.setCellValue(rts);
+        c.setCellStyle(valStyle);
+    }
+
+    private void setCellStr(Row row, int col, String val, CellStyle style) {
+        Cell c = row.createCell(col);
+        c.setCellValue(val != null ? val : "—");
+        c.setCellStyle(style);
+    }
+
+    private void setCellDbl(Row row, int col, double val, CellStyle style) {
+        Cell c = row.createCell(col);
+        c.setCellValue(val);
+        c.setCellStyle(style);
+    }
+
+    private void setCellNum(Row row, int col, Double val, CellStyle base, CellStyle alert,
+                            java.util.function.Predicate<Double> alertPred) {
+        Cell c = row.createCell(col);
+        if (val != null) {
+            c.setCellValue(val);
+            c.setCellStyle(alertPred.test(val) ? alert : base);
+        } else {
+            c.setCellValue("—");
+            c.setCellStyle(base);
+        }
+    }
+
+    private long count(List<LigneRapport> list,
+                       java.util.function.Predicate<LigneRapport> pred) {
+        return list.stream().filter(pred).count();
+    }
+
+    private StatBlock calcStat(List<LigneRapport> list,
+                               java.util.function.Function<LigneRapport, Double> getter) {
+        double[] vals = list.stream().map(getter).filter(v -> v != null)
+                .mapToDouble(Double::doubleValue).toArray();
         if (vals.length == 0) return new StatBlock(0, 0, 0);
-        double min = Double.MAX_VALUE, max = Double.MIN_VALUE, sum = 0;
+        double min = Double.MAX_VALUE, max = -Double.MAX_VALUE, sum = 0;
         for (double v : vals) { min = Math.min(min, v); max = Math.max(max, v); sum += v; }
         return new StatBlock(min, max, sum / vals.length);
     }
 
     record StatBlock(double min, double max, double avg) {}
 
-    // ── Header / Footer sur chaque page ──────────────────────────
-    static class HeaderFooter extends PdfPageEventHelper {
-        @Override
-        public void onEndPage(PdfWriter writer, Document document) {
-            PdfContentByte cb = writer.getDirectContent();
-            BaseFont bf;
-            try { bf = BaseFont.createFont(); } catch (Exception e) { return; }
+    // ── Style factories (unchanged) ───────────────────────────────
 
-            // Footer
-            cb.saveState();
-            cb.setColorFill(new BaseColor(148, 163, 184));
-            cb.setFontAndSize(bf, 7);
-            cb.beginText();
-            cb.showTextAligned(Element.ALIGN_CENTER,
-                    "JFC1 — Acide Phosphorique | Page " + writer.getPageNumber(),
-                    document.getPageSize().getWidth() / 2, 25, 0);
-            cb.endText();
-            cb.restoreState();
+    private CellStyle createTitleStyle(XSSFWorkbook wb) {
+        CellStyle s = wb.createCellStyle();
+        XSSFFont f = wb.createFont();
+        f.setBold(true); f.setFontHeightInPoints((short) 18);
+        f.setColor(new XSSFColor(new byte[]{0, (byte)232, 122}, null));
+        s.setFont(f); s.setAlignment(HorizontalAlignment.CENTER);
+        s.setFillForegroundColor(new XSSFColor(new byte[]{6, 13, 26}, null));
+        s.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        return s;
+    }
+
+    private CellStyle createSubTitleStyle(XSSFWorkbook wb) {
+        CellStyle s = wb.createCellStyle();
+        XSSFFont f = wb.createFont();
+        f.setFontHeightInPoints((short) 10);
+        f.setColor(new XSSFColor(new byte[]{(byte)148,(byte)163,(byte)184}, null));
+        s.setFont(f); s.setAlignment(HorizontalAlignment.CENTER);
+        s.setFillForegroundColor(new XSSFColor(new byte[]{6, 13, 26}, null));
+        s.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        return s;
+    }
+
+    private CellStyle createSectionStyle(XSSFWorkbook wb) {
+        CellStyle s = wb.createCellStyle();
+        XSSFFont f = wb.createFont();
+        f.setBold(true); f.setFontHeightInPoints((short) 11);
+        f.setColor(new XSSFColor(new byte[]{0,(byte)232,122}, null));
+        s.setFont(f);
+        s.setFillForegroundColor(new XSSFColor(new byte[]{15,23,42}, null));
+        s.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        return s;
+    }
+
+    private CellStyle createHeaderStyle(XSSFWorkbook wb) {
+        CellStyle s = wb.createCellStyle();
+        XSSFFont f = wb.createFont();
+        f.setBold(true); f.setFontHeightInPoints((short) 9);
+        f.setColor(new XSSFColor(new byte[]{0,(byte)232,122}, null));
+        s.setFont(f); s.setAlignment(HorizontalAlignment.CENTER);
+        s.setFillForegroundColor(new XSSFColor(new byte[]{15,23,42}, null));
+        s.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        setBorder(s, BorderStyle.THIN, new XSSFColor(new byte[]{51,65,85}, null));
+        return s;
+    }
+
+    private CellStyle createNormalStyle(XSSFWorkbook wb, boolean alert) {
+        CellStyle s = wb.createCellStyle();
+        XSSFFont f = wb.createFont();
+        f.setFontHeightInPoints((short) 9);
+        if (alert) {
+            f.setBold(true);
+            f.setColor(new XSSFColor(new byte[]{(byte)251,(byte)191,36}, null));
+            s.setFillForegroundColor(new XSSFColor(new byte[]{45,25,0}, null));
+        } else {
+            f.setColor(new XSSFColor(new byte[]{(byte)148,(byte)163,(byte)184}, null));
+            s.setFillForegroundColor(new XSSFColor(new byte[]{6,13,26}, null));
+        }
+        s.setFont(f); s.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        s.setAlignment(HorizontalAlignment.CENTER);
+        setBorder(s, BorderStyle.THIN, new XSSFColor(new byte[]{51,65,85}, null));
+        return s;
+    }
+
+    private CellStyle createAltRowStyle(XSSFWorkbook wb) {
+        CellStyle s = wb.createCellStyle();
+        XSSFFont f = wb.createFont();
+        f.setFontHeightInPoints((short) 9);
+        f.setColor(new XSSFColor(new byte[]{(byte)148,(byte)163,(byte)184}, null));
+        s.setFont(f);
+        s.setFillForegroundColor(new XSSFColor(new byte[]{15,23,42}, null));
+        s.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        s.setAlignment(HorizontalAlignment.CENTER);
+        setBorder(s, BorderStyle.THIN, new XSSFColor(new byte[]{51,65,85}, null));
+        return s;
+    }
+
+    private CellStyle createInfoValueStyle(XSSFWorkbook wb) {
+        CellStyle s = wb.createCellStyle();
+        XSSFFont f = wb.createFont();
+        f.setBold(true); f.setFontHeightInPoints((short) 12);
+        f.setColor(new XSSFColor(new byte[]{0,(byte)232,122}, null));
+        s.setFont(f); s.setAlignment(HorizontalAlignment.CENTER);
+        s.setVerticalAlignment(VerticalAlignment.CENTER);
+        s.setFillForegroundColor(new XSSFColor(new byte[]{15,23,42}, null));
+        s.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        setBorder(s, BorderStyle.THIN, new XSSFColor(new byte[]{51,65,85}, null));
+        return s;
+    }
+
+    private void setBorder(CellStyle s, BorderStyle bs, XSSFColor color) {
+        s.setBorderTop(bs); s.setBorderBottom(bs);
+        s.setBorderLeft(bs); s.setBorderRight(bs);
+        if (s instanceof XSSFCellStyle xs) {
+            xs.setTopBorderColor(color); xs.setBottomBorderColor(color);
+            xs.setLeftBorderColor(color); xs.setRightBorderColor(color);
         }
     }
 }

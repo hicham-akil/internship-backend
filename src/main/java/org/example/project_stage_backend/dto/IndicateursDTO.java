@@ -8,10 +8,7 @@ public class IndicateursDTO {
     private Long id;
     private LocalDateTime date;
 
-    // Pertes gypse
-    private Double se;
-    private Double syn;
-    private Double intVal;
+
 
     // Rendements
     private Double rc;

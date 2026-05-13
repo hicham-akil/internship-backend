@@ -21,13 +21,8 @@ public class IndicateursCalcules {
     @Column(nullable = false)
     private LocalDateTime date;
 
-    // ── Pertes de P2O5 dans le gypse ──────────────────────────────
-    // SE  = % P2O5 soluble dans le gypse (moyenne A+B)
-    @Column(name = "se")  private Double se;
-    // SYN = % P2O5 synoptique dans le gypse (moyenne A+B)
-    @Column(name = "syn") private Double syn;
-    // INT = % P2O5 intermédiaire dans le gypse (moyenne A+B)
-    @Column(name = "int_val") private Double intVal;   // "int" est mot réservé Java
+
+
 
     // ── Rendement de Concentration (RC) ───────────────────────────
     // RC = (P2O5_produite / P2O5_entrant_dans_phosphate) × 100

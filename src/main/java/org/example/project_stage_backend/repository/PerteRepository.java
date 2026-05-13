@@ -17,9 +17,12 @@ public interface PerteRepository extends JpaRepository<Perte, Long> {
             "ORDER BY ABS(FUNCTION('TIMESTAMPDIFF', SECOND, p.date, :dateRef)) ASC LIMIT 1")
     Optional<Perte> findClosestToDate(
             @Param("dateRef") LocalDateTime dateRef,
-            @Param("debut")   LocalDateTime debut,
-            @Param("fin")     LocalDateTime fin);
+            @Param("debut") LocalDateTime debut,
+            @Param("fin") LocalDateTime fin);
 
     Optional<Perte> findTopByOrderByDateDesc();
-    List<Perte>     findTop100ByOrderByDateDesc();
+
+    List<Perte> findTop100ByOrderByDateDesc();
+
+    List<Perte> findByDateBetweenOrderByDateAsc(LocalDateTime debut, LocalDateTime fin);
 }
