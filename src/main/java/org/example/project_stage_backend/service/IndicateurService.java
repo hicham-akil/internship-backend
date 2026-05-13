@@ -157,15 +157,14 @@ public class IndicateurService {
         Optional<AnalysePhosphate> phosphate  = phosphateRepo.findClosestToDate(dateRef, debut, fin);
         Optional<Production>       production = productionRepo.findClosestToDate(dateRef, debut, fin);
         Optional<Consommation>     conso      = consommationRepo.findClosestToDate(dateRef, debut, fin);
-        Optional<Perte>            perte      = perteRepo.findClosestToDate(dateRef, debut, fin);
 
-        if (gypse.isEmpty() || phosphate.isEmpty() || production.isEmpty() || conso.isEmpty() || perte.isEmpty()) {
+        if (gypse.isEmpty() || phosphate.isEmpty() || production.isEmpty() || conso.isEmpty()) {
             log.warn("⚠ Données incomplètes pour date={} — indicateurs non calculés", dateRef);
             return null;
         }
 
         IndicateursCalcules indicateurs = calculer(
-                dateRef, gypse.get(), phosphate.get(), production.get(), conso.get(), perte.get());
+                dateRef, gypse.get(), phosphate.get(), production.get(), conso.get());
 
         IndicateursCalcules saved = indicateursRepo.save(indicateurs);
         log.info("✅ Indicateurs calculés et sauvegardés pour date={}", dateRef);
@@ -183,14 +182,9 @@ public class IndicateurService {
             AnalyseGypse gypse,
             AnalysePhosphate phosphate,
             Production production,
-            Consommation conso,
-            Perte perte) {
+            Consommation conso) {
 
         log.info("⚙ CALCULATION START for {}", dateRef);
-
-        Double se     = perte.getSe();
-        Double syn    = perte.getSyn();
-        Double intVal = perte.getIntVal();
 
         Double p2o5Gypse = moyenne(gypse.getP2o5GypseA(), gypse.getP2o5GypseB());
         Double caOGypse  = moyenne(gypse.getCaOGypseA(), gypse.getCaOGypseB());
