@@ -19,17 +19,18 @@ public class RapportController {
     @GetMapping("/journalier")
     public ResponseEntity<byte[]> telechargerRapport() {
         try {
-            byte[] pdf = rapportService.genererRapport24h();
+            byte[] xlsx = rapportService.genererRapport24h();
 
             String filename = "rapport_jfc3_" +
-                    LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) + ".pdf";
+                    LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) + ".xlsx";
 
             HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_PDF);
+            headers.setContentType(MediaType.parseMediaType(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
             headers.setContentDisposition(
                     ContentDisposition.attachment().filename(filename).build());
 
-            return ResponseEntity.ok().headers(headers).body(pdf);
+            return ResponseEntity.ok().headers(headers).body(xlsx);
 
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();

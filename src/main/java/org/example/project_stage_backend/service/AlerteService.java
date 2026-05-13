@@ -55,10 +55,7 @@ public class AlerteService {
     public void verifierEtCreerAlertes(IndicateursCalcules ind) {
         List<Alerte> alertes = new ArrayList<>();
 
-        // Vérifications MAX (trop haut = mauvais)
-        verifierMax(alertes, "SE",               ind.getSe(),               ind.getDate());
-        verifierMax(alertes, "SYN",              ind.getSyn(),              ind.getDate());
-        verifierMax(alertes, "INT",              ind.getIntVal(),           ind.getDate());
+
         verifierMax(alertes, "CONSO_H2SO4",      ind.getConsoH2so4(),      ind.getDate());
         verifierMax(alertes, "CONSO_EAU_BRUTE",  ind.getConsoEauBrute(),   ind.getDate());
         verifierMax(alertes, "CONSO_PHOSPHATES", ind.getConsoPhosphates(), ind.getDate());
