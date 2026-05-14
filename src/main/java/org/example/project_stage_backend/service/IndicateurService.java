@@ -59,7 +59,6 @@ public class IndicateurService {
 
         return recalculerDepuisDate(perte.getDate());
     }
-
     @Transactional
     public IndicateursDTO ingestGypse(AnalyseGypseDTO dto) {
         AnalyseGypse gypse = sauvegarderGypse(dto);
@@ -115,7 +114,6 @@ public class IndicateurService {
         return gypseRepo.findTop100ByOrderByDateDesc()
                 .stream().map(this::toGypseDTO).collect(Collectors.toList());
     }
-
     @Transactional(readOnly = true)
     public Optional<PerteDTO> getDernierPerte() {
         return perteRepo.findTopByOrderByDateDesc().map(this::toPerteDTO);
@@ -159,10 +157,9 @@ public class IndicateurService {
         Optional<Consommation>     conso      = consommationRepo.findClosestToDate(dateRef, debut, fin);
 
         if (gypse.isEmpty() || phosphate.isEmpty() || production.isEmpty() || conso.isEmpty()) {
-            log.warn("⚠ Données incomplètes pour date={} — indicateurs non calculés", dateRef);
+                log.warn("⚠ Données incomplètes pour date={} — indicateurs non calculés", dateRef);
             return null;
         }
-
         IndicateursCalcules indicateurs = calculer(
                 dateRef, gypse.get(), phosphate.get(), production.get(), conso.get());
 
